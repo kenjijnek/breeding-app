@@ -280,6 +280,22 @@
   </div>
 </div>
 
+<!-- Modal: 個体修正 -->
+<div class="modal" id="m-edit">
+  <div class="modal__c">
+    <div class="modal__ttl" id="m-edit-ttl">個体情報を修正</div>
+    <div class="fg"><label class="fl">耳標番号 *</label><input class="fi" id="e-tag"></div>
+    <div class="frow">
+      <div class="fg"><label class="fl">産歴（産目）</label><input type="number" class="fi" id="e-parity" min="1" max="20"></div>
+      <div class="fg"><label class="fl">分娩日</label><input type="date" class="fi" id="e-calving"></div>
+    </div>
+    <div class="bgrp">
+      <button class="btn btn--s" onclick="closeModal('m-edit')">キャンセル</button>
+      <button class="btn btn--p" onclick="saveEdit()">保存</button>
+    </div>
+  </div>
+</div>
+
 <!-- Modal: 妊娠鑑定 -->
 <div class="modal" id="m-preg">
   <div class="modal__c">
@@ -520,6 +536,9 @@ function renderDetail(cowId) {
     <button class="btn btn--p btn--sm" style="width:100%;padding:var(--sp-sm) 4px" onclick="openBreed('${cowId}')">種付け登録</button>
     <button class="btn btn--s btn--sm" style="width:100%;padding:var(--sp-sm) 4px" onclick="openPreg('${cowId}')">妊娠鑑定</button>
     <button class="btn btn--s btn--sm" style="width:100%;padding:var(--sp-sm) 4px" onclick="openMilk('${cowId}')">乳検データ</button>
+  </div>
+  <div style="margin-bottom:var(--sp-md)">
+    <button class="btn btn--s" onclick="openEdit('${cowId}')">個体情報を修正</button>
   </div>`;
 
   // Breeding records
@@ -668,6 +687,32 @@ function saveMilk() {
   DB.cows=cows;
   closeModal('m-milk');
   renderDetail(_mkCow);
+}
+
+// ===== EDIT MODAL =====
+let _eCow=null;
+function openEdit(cowId) {
+  _eCow=cowId;
+  const cow=DB.cows.find(c=>c.id===cowId);
+  document.getElementById('m-edit-ttl').textContent=`個体情報を修正 — ${cow.earTag}`;
+  document.getElementById('e-tag').value=cow.earTag;
+  document.getElementById('e-parity').value=cow.parity||'';
+  document.getElementById('e-calving').value=cow.calvingDate||'';
+  document.getElementById('m-edit').classList.add('open');
+}
+function saveEdit() {
+  const tag=document.getElementById('e-tag').value.trim();
+  if(!tag){ alert('耳標番号を入力してください'); return; }
+  const cows=DB.cows;
+  const cow=cows.find(c=>c.id===_eCow);
+  // 耳標が変わる場合、重複チェック
+  if(tag!==cow.earTag && cows.find(c=>c.earTag===tag)){ alert('この耳標番号はすでに登録されています'); return; }
+  cow.earTag=tag;
+  cow.parity=parseInt(document.getElementById('e-parity').value)||null;
+  cow.calvingDate=document.getElementById('e-calving').value||null;
+  DB.cows=cows;
+  closeModal('m-edit');
+  renderDetail(_eCow);
 }
 
 // ===== DELETE =====
