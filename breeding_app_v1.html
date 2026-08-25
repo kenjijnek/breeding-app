@@ -210,6 +210,12 @@
       <button class="btn btn--p" onclick="saveSettings()">保存</button>
     </div>
     <div class="card">
+      <div class="sec-ttl">乳検CSVインポート（DAYSREC1）</div>
+      <p style="font-size:0.82rem;color:var(--text-sub);margin-bottom:var(--sp-md)">牛群検定Webシステムから「検定日成績データ（DAYSREC1、CSV）」をダウンロードし、読み込んでください。個体番号（下4桁）・乳量・産次・分娩日を一括取り込みします。</p>
+      <button class="btn btn--p" onclick="document.getElementById('csvFile').click()">乳検CSVを読み込む</button>
+      <input type="file" id="csvFile" accept=".csv,.dat" style="display:none" onchange="importCsv(event)">
+    </div>
+    <div class="card">
       <div class="sec-ttl">データ管理</div>
       <div class="bgrp">
         <button class="btn btn--s" onclick="exportData()">書き出し（JSON）</button>
@@ -325,11 +331,7 @@
   <div class="modal__c">
     <div class="modal__ttl">乳検データ登録</div>
     <div class="fg"><label class="fl">検定日 *</label><input type="date" class="fi" id="mk-date"></div>
-    <div class="frow">
-      <div class="fg"><label class="fl">乳量（kg/日）*</label><input type="number" class="fi" id="mk-yield" step="0.1" min="0" placeholder="例：30.5"></div>
-      <div class="fg"><label class="fl">乳脂肪（%）</label><input type="number" class="fi" id="mk-fat" step="0.01" min="0" placeholder="例：3.8"></div>
-    </div>
-    <div class="fg"><label class="fl">乳蛋白（%）</label><input type="number" class="fi" id="mk-protein" step="0.01" min="0" placeholder="例：3.2"></div>
+    <div class="fg"><label class="fl">乳量（kg/日）*</label><input type="number" class="fi" id="mk-yield" step="0.1" min="0" placeholder="例：30.5"></div>
     <div class="bgrp">
       <button class="btn btn--s" onclick="closeModal('m-milk')">キャンセル</button>
       <button class="btn btn--p" onclick="saveMilk()">登録</button>
@@ -528,8 +530,6 @@ function renderDetail(cowId) {
       <span class="kv-k">分娩後日齢</span><span class="kv-v">${dim!==null?dim+' 日':'—'}</span>
       ${due?`<span class="kv-k">分娩予定日</span><span class="kv-v">${fmt(due)}</span>`:''}
       ${mk?`<span class="kv-k">最新乳量</span><span class="kv-v">${mk.yield} kg（${fmt(mk.date)}）</span>`:''}
-      ${mk&&mk.fat?`<span class="kv-k">乳脂肪</span><span class="kv-v">${mk.fat}%</span>`:''}
-      ${mk&&mk.protein?`<span class="kv-k">乳蛋白</span><span class="kv-v">${mk.protein}%</span>`:''}
     </div>
   </div>
   <div class="bgrp3">
@@ -580,7 +580,7 @@ function renderDetail(cowId) {
       h+=`<div class="mr">
         <span style="color:var(--text-sub);font-size:0.75rem">${fmt(m.date)}</span>
         <span style="font-weight:700">${m.yield} kg/日</span>
-        <span style="font-size:0.75rem;color:var(--text-sub)">${m.fat?'脂'+m.fat+'%':''}${m.protein?' 蛋'+m.protein+'%':''}</span>
+        <span></span>
       </div>`;
     });
   }
@@ -683,10 +683,82 @@ function saveMilk() {
   if(!date||isNaN(y)){ alert('検定日と乳量を入力してください'); return; }
   const cows=DB.cows, cow=cows.find(c=>c.id===_mkCow);
   if(!cow.milkRecords) cow.milkRecords=[];
-  cow.milkRecords.push({ id:uid(), date, yield:y, fat:parseFloat(document.getElementById('mk-fat').value)||null, protein:parseFloat(document.getElementById('mk-protein').value)||null });
+  cow.milkRecords.push({ id:uid(), date, yield:y });
   DB.cows=cows;
   closeModal('m-milk');
   renderDetail(_mkCow);
+}
+
+// ===== CSV IMPORT (DAYSREC1) =====
+function importCsv(e) {
+  const file=e.target.files[0]; if(!file) return;
+  const reader=new FileReader();
+  reader.onload=ev=>{
+    try {
+      // Decode Shift-JIS
+      const buf=ev.target.result;
+      const decoder=new TextDecoder('shift-jis');
+      const text=decoder.decode(buf);
+      const lines=text.split(/\r?\n/).filter(l=>l.trim());
+
+      // Skip header rows (row 0 = column names, row 1 = farm info line with only 2 commas)
+      const dataLines=lines.filter(l=>{
+        const cols=l.split(',');
+        // Data rows have col[1]=4 and col[4] as numeric code
+        return cols[1]==='4' && /^\d{4}$/.test(cols[4]);
+      });
+
+      if(!dataLines.length){ alert('有効なデータが見つかりませんでした'); return; }
+
+      const testDate=dataLines[0].split(',')[2]; // YYYYMMDD
+      const testDateFmt=`${testDate.slice(0,4)}-${testDate.slice(4,6)}-${testDate.slice(6,8)}`;
+
+      let updated=0, added=0, skipped=0;
+      const cows=DB.cows;
+
+      dataLines.forEach(line=>{
+        const c=line.split(',');
+        const code4=c[4];           // 個体コード下4桁
+        const calvDate=c[5];        // 分娩日 YYYYMMDD
+        const parityRaw=c[6];       // 産次 "04"→4
+        const milkRaw=c[15];        // 日乳量×10
+
+        // Skip 乾乳・未泌乳（乳量が0000）
+        if(!milkRaw||milkRaw==='0000'||milkRaw==='') { skipped++; return; }
+
+        const yield_kg=Math.round(parseInt(milkRaw)/10*10)/10; // 1桁丸め
+        const parity=parseInt(parityRaw)||null;
+        const calvDateFmt=calvDate?`${calvDate.slice(0,4)}-${calvDate.slice(4,6)}-${calvDate.slice(6,8)}`:null;
+
+        // 耳標下4桁でマッチング
+        const cow=cows.find(cow=>cow.earTag.slice(-4)===code4);
+        if(!cow){ skipped++; return; }
+
+        // 乳量記録を追加（同じ検定日のものがあれば上書き）
+        if(!cow.milkRecords) cow.milkRecords=[];
+        const existing=cow.milkRecords.findIndex(m=>m.date===testDateFmt);
+        if(existing>=0){
+          cow.milkRecords[existing].yield=yield_kg;
+          updated++;
+        } else {
+          cow.milkRecords.push({ id:uid(), date:testDateFmt, yield:yield_kg });
+          added++;
+        }
+
+        // 産次・分娩日が未設定なら更新
+        if(!cow.parity&&parity) cow.parity=parity;
+        if(!cow.calvingDate&&calvDateFmt) cow.calvingDate=calvDateFmt;
+      });
+
+      DB.cows=cows;
+      alert(`取り込み完了\n更新：${updated}件 ／ 追加：${added}件 ／ スキップ：${skipped}件`);
+      renderDash();
+    } catch(err) {
+      alert('CSVの読み込みに失敗しました: '+err.message);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+  e.target.value='';
 }
 
 // ===== EDIT MODAL =====
