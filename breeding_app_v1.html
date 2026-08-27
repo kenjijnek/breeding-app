@@ -730,9 +730,17 @@ function importCsv(e) {
         const parity=parseInt(parityRaw)||null;
         const calvDateFmt=calvDate?`${calvDate.slice(0,4)}-${calvDate.slice(4,6)}-${calvDate.slice(6,8)}`:null;
 
-        // 耳標下4桁でマッチング
-        const cow=cows.find(cow=>cow.earTag.slice(-4)===code4);
-        if(!cow){ skipped++; return; }
+        // 耳標下4桁でマッチング、なければ新規作成
+        let cow=cows.find(c=>c.earTag.slice(-4)===code4);
+        if(!cow){
+          cow={ id:uid(), earTag:code4, parity, calvingDate:calvDateFmt, breedingRecords:[], milkRecords:[], createdAt:toDay() };
+          cows.push(cow);
+          added++;
+        } else {
+          // 産次・分娩日が未設定なら更新
+          if(!cow.parity&&parity) cow.parity=parity;
+          if(!cow.calvingDate&&calvDateFmt) cow.calvingDate=calvDateFmt;
+        }
 
         // 乳量記録を追加（同じ検定日のものがあれば上書き）
         if(!cow.milkRecords) cow.milkRecords=[];
@@ -742,16 +750,11 @@ function importCsv(e) {
           updated++;
         } else {
           cow.milkRecords.push({ id:uid(), date:testDateFmt, yield:yield_kg });
-          added++;
         }
-
-        // 産次・分娩日が未設定なら更新
-        if(!cow.parity&&parity) cow.parity=parity;
-        if(!cow.calvingDate&&calvDateFmt) cow.calvingDate=calvDateFmt;
       });
 
       DB.cows=cows;
-      alert(`取り込み完了\n更新：${updated}件 ／ 追加：${added}件 ／ スキップ：${skipped}件`);
+      alert(`取り込み完了\n新規登録：${added}頭 ／ 乳量更新：${updated}件 ／ スキップ（乾乳等）：${skipped}件`);
       renderDash();
     } catch(err) {
       alert('CSVの読み込みに失敗しました: '+err.message);
