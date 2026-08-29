@@ -561,8 +561,15 @@ function renderDetail(cowId) {
         </div>
         ${detail?`<div class="br__detail">${detail}</div>`:''}
         ${b.memo?`<div class="br__detail">メモ：${b.memo}</div>`:''}
-        ${pcs.map(p=>`<div class="br__detail" style="margin-top:4px">鑑定：${fmt(p.date)} ${p.result==='positive'?'陽性':'陰性'}（${p.method}）${p.memo?' '+p.memo:''}</div>`).join('')}
+        ${pcs.map(p=>`<div class="br__detail" style="margin-top:6px;display:flex;justify-content:space-between;align-items:center;gap:8px">
+          <span>鑑定：${fmt(p.date)} ${p.result==='positive'?'陽性':'陰性'}（${p.method}）${p.memo?' '+p.memo:''}</span>
+          <span style="display:flex;gap:4px;flex-shrink:0">
+            <button class="btn btn--s btn--sm" onclick="openEditPreg('${cowId}','${b.id}','${p.id}')">編集</button>
+            <button class="btn btn--d btn--sm" onclick="delPreg('${cowId}','${b.id}','${p.id}')">削除</button>
+          </span>
+        </div>`).join('')}
         <div class="br__actions">
+          <button class="btn btn--s btn--sm" onclick="openEditBreed('${cowId}','${b.id}')">編集</button>
           <button class="btn btn--s btn--sm" onclick="openPreg('${cowId}','${b.id}')">鑑定追加</button>
           <button class="btn btn--d btn--sm" onclick="delBreed('${cowId}','${b.id}')">削除</button>
         </div>
@@ -630,15 +637,48 @@ function saveBreed() {
   const date=document.getElementById('b-date').value;
   if(!date){ alert('受精日を入力してください'); return; }
   const isAI=document.getElementById('b-ai-btn').classList.contains('active');
-  const rec={ id:uid(), date, type:isAI?'AI':'ET', memo:document.getElementById('b-memo').value, pregChecks:[] };
-  if(isAI){ rec.sire=document.getElementById('b-sire').value; rec.lot=document.getElementById('b-lot').value; }
-  else { rec.etSire=document.getElementById('b-et-sire').value; rec.etMgs=document.getElementById('b-et-mgs').value; rec.etGrade=document.getElementById('b-et-grade').value; rec.etType=document.getElementById('b-et-type').value; }
   const cows=DB.cows, cow=cows.find(c=>c.id===_bCow);
-  if(!cow.breedingRecords) cow.breedingRecords=[];
-  cow.breedingRecords.push(rec);
+  const editId=document.getElementById('m-breed').dataset.editId;
+  if(editId) {
+    // 編集モード
+    const rec=cow.breedingRecords.find(r=>r.id===editId);
+    rec.date=date; rec.type=isAI?'AI':'ET'; rec.memo=document.getElementById('b-memo').value;
+    if(isAI){ rec.sire=document.getElementById('b-sire').value; rec.lot=document.getElementById('b-lot').value; }
+    else { rec.etSire=document.getElementById('b-et-sire').value; rec.etMgs=document.getElementById('b-et-mgs').value; rec.etGrade=document.getElementById('b-et-grade').value; rec.etType=document.getElementById('b-et-type').value; }
+    delete document.getElementById('m-breed').dataset.editId;
+  } else {
+    // 新規登録
+    const rec={ id:uid(), date, type:isAI?'AI':'ET', memo:document.getElementById('b-memo').value, pregChecks:[] };
+    if(isAI){ rec.sire=document.getElementById('b-sire').value; rec.lot=document.getElementById('b-lot').value; }
+    else { rec.etSire=document.getElementById('b-et-sire').value; rec.etMgs=document.getElementById('b-et-mgs').value; rec.etGrade=document.getElementById('b-et-grade').value; rec.etType=document.getElementById('b-et-type').value; }
+    if(!cow.breedingRecords) cow.breedingRecords=[];
+    cow.breedingRecords.push(rec);
+  }
   DB.cows=cows;
   closeModal('m-breed');
   renderDetail(_bCow);
+}
+
+// ===== BREED EDIT =====
+function openEditBreed(cowId, breedId) {
+  _bCow=cowId;
+  const cow=DB.cows.find(c=>c.id===cowId);
+  const b=cow.breedingRecords.find(r=>r.id===breedId);
+  // Store breedId for update
+  _bCow._editBreedId=breedId;
+  document.getElementById('m-breed-ttl').textContent=`種付け記録を編集 — ${cow.earTag}`;
+  document.getElementById('b-date').value=b.date;
+  selBreedType(b.type);
+  document.getElementById('b-sire').value=b.sire||'';
+  document.getElementById('b-lot').value=b.lot||'';
+  document.getElementById('b-et-sire').value=b.etSire||'';
+  document.getElementById('b-et-mgs').value=b.etMgs||'';
+  document.getElementById('b-et-grade').value=b.etGrade||'';
+  document.getElementById('b-et-type').value=b.etType||'新鮮';
+  document.getElementById('b-memo').value=b.memo||'';
+  // Tag modal with edit target
+  document.getElementById('m-breed').dataset.editId=breedId;
+  document.getElementById('m-breed').classList.add('open');
 }
 
 // ===== PREG MODAL =====
@@ -659,15 +699,40 @@ function selPreg(r) {
   document.getElementById('p-pos-btn').classList.toggle('active',r==='positive');
   document.getElementById('p-neg-btn').classList.toggle('active',r==='negative');
 }
+let _pEditId=null;
+function openEditPreg(cowId, breedId, pregId) {
+  _pCow=cowId; _pBreed=breedId; _pEditId=pregId;
+  const cow=DB.cows.find(c=>c.id===cowId);
+  const br=cow.breedingRecords.find(b=>b.id===breedId);
+  const p=br.pregChecks.find(c=>c.id===pregId);
+  document.getElementById('p-date').value=p.date;
+  document.getElementById('p-method').value=p.method;
+  document.getElementById('p-memo').value=p.memo||'';
+  selPreg(p.result);
+  document.getElementById('m-preg').classList.add('open');
+}
 function savePreg() {
   const date=document.getElementById('p-date').value;
   if(!date){ alert('鑑定日を入力してください'); return; }
   const cows=DB.cows, cow=cows.find(c=>c.id===_pCow), br=cow.breedingRecords.find(b=>b.id===_pBreed);
   if(!br.pregChecks) br.pregChecks=[];
-  br.pregChecks.push({ id:uid(), date, result:_pRes, method:document.getElementById('p-method').value, memo:document.getElementById('p-memo').value });
+  if(_pEditId) {
+    // 編集モード
+    const p=br.pregChecks.find(c=>c.id===_pEditId);
+    p.date=date; p.result=_pRes; p.method=document.getElementById('p-method').value; p.memo=document.getElementById('p-memo').value;
+    _pEditId=null;
+  } else {
+    br.pregChecks.push({ id:uid(), date, result:_pRes, method:document.getElementById('p-method').value, memo:document.getElementById('p-memo').value });
+  }
   DB.cows=cows;
   closeModal('m-preg');
   renderDetail(_pCow);
+}
+function delPreg(cowId, breedId, pregId) {
+  if(!confirm('この妊娠鑑定記録を削除しますか？')) return;
+  const cows=DB.cows, cow=cows.find(c=>c.id===cowId), br=cow.breedingRecords.find(b=>b.id===breedId);
+  br.pregChecks=br.pregChecks.filter(p=>p.id!==pregId);
+  DB.cows=cows; renderDetail(cowId);
 }
 
 // ===== MILK MODAL =====
