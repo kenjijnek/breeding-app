@@ -754,7 +754,7 @@ function importCsv(e) {
       });
 
       DB.cows=cows;
-      alert(`取り込み完了\n新規登録：${added}頭 ／ 乳量更新：${updated}件 ／ スキップ（乾乳等）：${skipped}件`);
+      alert(`取り込み完了\n新規登録：${added}頭 ／ 乳量更新：${updated}件 ／ 乳量なし（乾乳・育成等）：${skipped}頭`);
       renderDash();
     } catch(err) {
       alert('CSVの読み込みに失敗しました: '+err.message);
