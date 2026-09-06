@@ -402,10 +402,15 @@ function renderDash() {
     const lb=latestBreed(cow);
     if(!lb) return;
     if(getStatus(cow).s!=='inseminated') return;
-    cfg.alertDays.forEach(n=>{
+    // 各アラート日との差分を計算し、今日に最も近い1件だけ表示
+    const candidates=cfg.alertDays.map(n=>{
       const ad=addDays(lb.date,n), diff=diffDays(t,ad);
-      if(diff>=-1&&diff<=3) alerts.push({cow,ad,diff,n,bd:lb.date});
-    });
+      return {cow,ad,diff,n,bd:lb.date};
+    }).filter(a=>a.diff>=-1&&a.diff<=3);
+    if(!candidates.length) return;
+    // 絶対値が最小（今日に最も近い）を1件だけ採用
+    candidates.sort((a,b)=>Math.abs(a.diff)-Math.abs(b.diff));
+    alerts.push(candidates[0]);
   });
   alerts.sort((a,b)=>a.diff-b.diff);
 
