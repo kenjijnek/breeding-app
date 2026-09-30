@@ -194,6 +194,15 @@
     </div>
   </div>
 
+  <!-- Stats -->
+  <div class="page" id="page-stats">
+    <div style="display:flex;align-items:center;gap:var(--sp-sm);margin-bottom:var(--sp-md)">
+      <label class="fl" style="margin:0;white-space:nowrap">年度</label>
+      <select class="fi" id="stats-year" onchange="renderStats()" style="max-width:140px"></select>
+    </div>
+    <div id="stats-content"></div>
+  </div>
+
   <!-- Settings -->
   <div class="page" id="page-settings">
     <div class="card">
@@ -236,7 +245,10 @@
     <span class="bnav__icon">🐄</span><span>個体一覧</span>
   </button>
   <button class="bnav__item" id="nav-register" onclick="showPage('register')">
-    <span class="bnav__icon">➕</span><span>個体登録</span>
+    <span class="bnav__icon">➕</span><span>登録</span>
+  </button>
+  <button class="bnav__item" id="nav-stats" onclick="showPage('stats')">
+    <span class="bnav__icon">📊</span><span>統計</span>
   </button>
   <button class="bnav__item" id="nav-settings" onclick="showPage('settings')">
     <span class="bnav__icon">⚙️</span><span>設定</span>
@@ -259,6 +271,14 @@
       </div>
     </div>
     <div id="b-ai-fields">
+      <div class="fg">
+        <label class="fl">品種 *</label>
+        <div class="tgl">
+          <button class="tgl-btn active" id="b-cat-h" onclick="selCat('Holstein')">Holstein</button>
+          <button class="tgl-btn" id="b-cat-f" onclick="selCat('F1')">F1</button>
+          <button class="tgl-btn" id="b-cat-w" onclick="selCat('和牛')">和牛</button>
+        </div>
+      </div>
       <div class="fg"><label class="fl">種雄牛名</label><input class="fi" id="b-sire" placeholder="例：アポロ"></div>
       <div class="fg"><label class="fl">精液ロット番号</label><input class="fi" id="b-lot" placeholder="任意"></div>
     </div>
@@ -380,13 +400,14 @@ function showPage(p, cowId) {
   document.querySelectorAll('.bnav__item').forEach(el=>el.classList.remove('active'));
   const nb = document.getElementById('nav-'+p);
   if (nb) nb.classList.add('active');
-  const titles={dashboard:'今日のアラート',list:'個体一覧',detail:'個体詳細',register:'個体登録',settings:'設定'};
+  const titles={dashboard:'今日のアラート',list:'個体一覧',detail:'個体詳細',register:'個体登録',stats:'統計・受胎率',settings:'設定'};
   document.getElementById('hdrTitle').textContent = titles[p]||'繁殖管理';
   document.getElementById('backBtn').style.visibility = p==='detail'?'visible':'hidden';
   curPage=p;
   if (p==='dashboard') renderDash();
   if (p==='list') renderList();
   if (p==='detail' && cowId) { curCow=cowId; renderDetail(cowId); }
+  if (p==='stats') initStatsYear();
   if (p==='settings') loadCfg();
 }
 function goBack() { showPage('list'); }
@@ -402,13 +423,12 @@ function renderDash() {
     const lb=latestBreed(cow);
     if(!lb) return;
     if(getStatus(cow).s!=='inseminated') return;
-    // 各アラート日との差分を計算し、今日に最も近い1件だけ表示
+    const extraDays=(lb.cycleSkips||[]).length*21;
     const candidates=cfg.alertDays.map(n=>{
-      const ad=addDays(lb.date,n), diff=diffDays(t,ad);
-      return {cow,ad,diff,n,bd:lb.date};
+      const ad=addDays(lb.date,n+extraDays), diff=diffDays(t,ad);
+      return {cow,ad,diff,n,bd:lb.date,skipCount:(lb.cycleSkips||[]).length};
     }).filter(a=>a.diff>=-1&&a.diff<=3);
     if(!candidates.length) return;
-    // 絶対値が最小（今日に最も近い）を1件だけ採用
     candidates.sort((a,b)=>Math.abs(a.diff)-Math.abs(b.diff));
     alerts.push(candidates[0]);
   });
@@ -448,13 +468,18 @@ function renderDash() {
   } else {
     alerts.forEach(a=>{
       const dl=a.diff===0?'今日':a.diff>0?`${a.diff}日後`:`${Math.abs(a.diff)}日前`;
-      h+=`<div class="ai" onclick="showPage('detail','${a.cow.id}')">
-        <div class="ai__badge ai__badge--r">${a.n}日</div>
-        <div class="ai__info">
-          <div class="ai__cow">${a.cow.earTag}</div>
-          <div class="ai__sub">種付：${fmt(a.bd)} → ${fmt(a.ad)}（${dl}）</div>
+      const lb=latestBreed(a.cow);
+      const pcs=lb?(lb.pregChecks||[]).slice().sort((x,y)=>y.date.localeCompare(x.date)):[];
+      const lp=pcs[0];
+      const pregInfo=lp?`　${lp.result==='positive'?'陽性':'陰性'}（${lp.method}・${fmt(lp.date)}）`:'';
+      const skipInfo=a.skipCount?`　スキップ${a.skipCount}回`:'';
+      h+=`<div class="ai">
+        <div class="ai__badge ai__badge--r" onclick="showPage('detail','${a.cow.id}')">${a.n}日</div>
+        <div class="ai__info" onclick="showPage('detail','${a.cow.id}')">
+          <div class="ai__cow">${a.cow.earTag}${skipInfo}</div>
+          <div class="ai__sub">種付：${fmt(a.bd)} → ${fmt(a.ad)}（${dl}）${pregInfo}</div>
         </div>
-        <span class="tag tag--ret">要確認</span>
+        <button class="btn btn--s btn--sm" style="flex-shrink:0" onclick="skipCycle('${a.cow.id}','${lb.id}')">次周期へ</button>
       </div>`;
     });
   }
@@ -557,7 +582,7 @@ function renderDetail(cowId) {
       const pt=lp?(lp.result==='positive'?'<span class="tag tag--prg">陽性</span>':'<span class="tag tag--neg">陰性</span>'):'<span class="tag tag--pnd">鑑定未</span>';
       const isAI=b.type==='AI';
       const detail=isAI
-        ?[b.sire?'種雄牛：'+b.sire:'',b.lot?'ロット：'+b.lot:''].filter(Boolean).join(' ｜ ')
+        ?[b.breedCat?'品種：'+b.breedCat:'',b.sire?'種雄牛：'+b.sire:'',b.lot?'ロット：'+b.lot:''].filter(Boolean).join(' ｜ ')
         :[b.etSire?'父：'+b.etSire:'',b.etMgs?'母父：'+b.etMgs:'',b.etGrade||'',b.etType?'（'+b.etType+'）':''].filter(Boolean).join(' ');
       h+=`<div class="br">
         <div class="br__hdr">
@@ -630,6 +655,7 @@ function openBreed(cowId) {
   document.getElementById('b-et-grade').value='';
   document.getElementById('b-et-type').value='新鮮';
   selBreedType('AI');
+  selCat('Holstein');
   document.getElementById('m-breed').classList.add('open');
 }
 function selBreedType(t) {
@@ -648,13 +674,13 @@ function saveBreed() {
     // 編集モード
     const rec=cow.breedingRecords.find(r=>r.id===editId);
     rec.date=date; rec.type=isAI?'AI':'ET'; rec.memo=document.getElementById('b-memo').value;
-    if(isAI){ rec.sire=document.getElementById('b-sire').value; rec.lot=document.getElementById('b-lot').value; }
+    if(isAI){ rec.sire=document.getElementById('b-sire').value; rec.lot=document.getElementById('b-lot').value; rec.breedCat=_bCat; }
     else { rec.etSire=document.getElementById('b-et-sire').value; rec.etMgs=document.getElementById('b-et-mgs').value; rec.etGrade=document.getElementById('b-et-grade').value; rec.etType=document.getElementById('b-et-type').value; }
     delete document.getElementById('m-breed').dataset.editId;
   } else {
     // 新規登録
     const rec={ id:uid(), date, type:isAI?'AI':'ET', memo:document.getElementById('b-memo').value, pregChecks:[] };
-    if(isAI){ rec.sire=document.getElementById('b-sire').value; rec.lot=document.getElementById('b-lot').value; }
+    if(isAI){ rec.sire=document.getElementById('b-sire').value; rec.lot=document.getElementById('b-lot').value; rec.breedCat=_bCat; }
     else { rec.etSire=document.getElementById('b-et-sire').value; rec.etMgs=document.getElementById('b-et-mgs').value; rec.etGrade=document.getElementById('b-et-grade').value; rec.etType=document.getElementById('b-et-type').value; }
     if(!cow.breedingRecords) cow.breedingRecords=[];
     cow.breedingRecords.push(rec);
@@ -662,6 +688,26 @@ function saveBreed() {
   DB.cows=cows;
   closeModal('m-breed');
   renderDetail(_bCow);
+}
+
+// ===== CYCLE SKIP =====
+function skipCycle(cowId, breedId) {
+  if(!confirm('この周期をスキップして次の周期（約21日後）のアラートに切り替えますか？')) return;
+  const cows=DB.cows, cow=cows.find(c=>c.id===cowId), br=cow.breedingRecords.find(b=>b.id===breedId);
+  if(!br.cycleSkips) br.cycleSkips=[];
+  br.cycleSkips.push({ date:toDay() });
+  DB.cows=cows;
+  renderDash();
+}
+
+// ===== BREED CATEGORY =====
+let _bCat='Holstein';
+function selCat(cat) {
+  _bCat=cat;
+  ['Holstein','F1','和牛'].forEach(c=>{
+    const id=c==='Holstein'?'b-cat-h':c==='F1'?'b-cat-f':'b-cat-w';
+    document.getElementById(id).classList.toggle('active',c===cat);
+  });
 }
 
 // ===== BREED EDIT =====
@@ -674,6 +720,7 @@ function openEditBreed(cowId, breedId) {
   document.getElementById('m-breed-ttl').textContent=`種付け記録を編集 — ${cow.earTag}`;
   document.getElementById('b-date').value=b.date;
   selBreedType(b.type);
+  selCat(b.breedCat||'Holstein');
   document.getElementById('b-sire').value=b.sire||'';
   document.getElementById('b-lot').value=b.lot||'';
   document.getElementById('b-et-sire').value=b.etSire||'';
@@ -872,6 +919,99 @@ function delCow(cowId) {
   if(!confirm(cow.earTag+' を削除しますか？この操作は元に戻せません。')) return;
   DB.cows=DB.cows.filter(c=>c.id!==cowId);
   showPage('list');
+}
+
+// ===== STATS =====
+function getFiscalYear(dateStr) {
+  const d=new Date(dateStr), m=d.getMonth()+1;
+  return m>=4?d.getFullYear():d.getFullYear()-1;
+}
+function initStatsYear() {
+  const cows=DB.cows;
+  const years=new Set();
+  const curFY=getFiscalYear(toDay());
+  years.add(curFY);
+  cows.forEach(cow=>{
+    (cow.breedingRecords||[]).forEach(b=>{ if(b.date) years.add(getFiscalYear(b.date)); });
+  });
+  const sel=document.getElementById('stats-year');
+  sel.innerHTML=[...years].sort((a,b)=>b-a).map(y=>`<option value="${y}">${y}年度（${y}/4〜${y+1}/3）</option>`).join('');
+  renderStats();
+}
+function renderStats() {
+  const fy=parseInt(document.getElementById('stats-year').value);
+  const fyStart=`${fy}-04-01`, fyEnd=`${fy+1}-03-31`;
+  const cows=DB.cows;
+
+  // 期間内の全種付けを収集
+  const records=[];
+  cows.forEach(cow=>{
+    (cow.breedingRecords||[]).forEach(b=>{
+      if(!b.date||b.date<fyStart||b.date>fyEnd) return;
+      const pcs=(b.pregChecks||[]).slice().sort((a,c)=>c.date.localeCompare(a.date));
+      const lp=pcs[0];
+      records.push({ type:b.type, cat:b.breedCat||'—', result:lp?lp.result:null, date:b.date });
+    });
+  });
+
+  // 集計関数
+  const calc=(recs)=>{
+    const checked=recs.filter(r=>r.result);
+    const pos=checked.filter(r=>r.result==='positive');
+    return { total:recs.length, checked:checked.length, pos:pos.length, rate:checked.length?Math.round(pos.length/checked.length*100):null };
+  };
+
+  const aiRecs=records.filter(r=>r.type==='AI');
+  const etRecs=records.filter(r=>r.type==='ET');
+  const ai=calc(aiRecs), et=calc(etRecs), total=calc(records);
+
+  // 品種別集計（AI）
+  const cats=['Holstein','F1','和牛'];
+  const catStats=cats.map(c=>({ cat:c, ...calc(aiRecs.filter(r=>r.cat===c)) })).filter(c=>c.total>0);
+
+  // 月別集計
+  const months={};
+  records.forEach(r=>{
+    const ym=r.date.slice(0,7);
+    if(!months[ym]) months[ym]={total:0,pos:0,checked:0};
+    months[ym].total++;
+    if(r.result){ months[ym].checked++; if(r.result==='positive') months[ym].pos++; }
+  });
+
+  const rateBar=(rate)=>rate===null?'—':`<div style="display:flex;align-items:center;gap:8px"><div style="flex:1;background:var(--border);border-radius:4px;height:8px"><div style="width:${rate}%;background:var(--success);height:8px;border-radius:4px"></div></div><span style="font-weight:700;min-width:36px">${rate}%</span></div>`;
+
+  let h=`<div class="card">
+    <div class="card__ttl">受胎率サマリー（${fy}年度）</div>
+    <table style="width:100%;border-collapse:collapse;font-size:0.85rem">
+      <tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:6px 4px;color:var(--text-sub);font-weight:600">区分</th><th style="text-align:center;padding:6px 4px;color:var(--text-sub);font-weight:600">種付</th><th style="text-align:center;padding:6px 4px;color:var(--text-sub);font-weight:600">鑑定済</th><th style="text-align:center;padding:6px 4px;color:var(--text-sub);font-weight:600">陽性</th><th style="text-align:left;padding:6px 8px;color:var(--text-sub);font-weight:600">受胎率</th></tr>
+      <tr style="border-bottom:1px solid var(--border)"><td style="padding:8px 4px;font-weight:700">AI計</td><td style="text-align:center;padding:8px 4px">${ai.total}</td><td style="text-align:center;padding:8px 4px">${ai.checked}</td><td style="text-align:center;padding:8px 4px">${ai.pos}</td><td style="padding:8px 8px">${rateBar(ai.rate)}</td></tr>
+      <tr style="border-bottom:1px solid var(--border)"><td style="padding:8px 4px;font-weight:700">ET計</td><td style="text-align:center;padding:8px 4px">${et.total}</td><td style="text-align:center;padding:8px 4px">${et.checked}</td><td style="text-align:center;padding:8px 4px">${et.pos}</td><td style="padding:8px 8px">${rateBar(et.rate)}</td></tr>
+      <tr><td style="padding:8px 4px;font-weight:700">総計</td><td style="text-align:center;padding:8px 4px">${total.total}</td><td style="text-align:center;padding:8px 4px">${total.checked}</td><td style="text-align:center;padding:8px 4px">${total.pos}</td><td style="padding:8px 8px">${rateBar(total.rate)}</td></tr>
+    </table>
+  </div>`;
+
+  if(catStats.length) {
+    h+=`<div class="card"><div class="card__ttl">AI品種別内訳</div>
+    <table style="width:100%;border-collapse:collapse;font-size:0.85rem">
+      <tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:6px 4px;color:var(--text-sub);font-weight:600">品種</th><th style="text-align:center;padding:6px 4px;color:var(--text-sub);font-weight:600">種付</th><th style="text-align:center;padding:6px 4px;color:var(--text-sub);font-weight:600">陽性</th><th style="text-align:left;padding:6px 8px;color:var(--text-sub);font-weight:600">受胎率</th></tr>
+      ${catStats.map(c=>`<tr style="border-bottom:1px solid var(--border)"><td style="padding:8px 4px;font-weight:700">${c.cat}</td><td style="text-align:center;padding:8px 4px">${c.total}</td><td style="text-align:center;padding:8px 4px">${c.pos}</td><td style="padding:8px 8px">${rateBar(c.rate)}</td></tr>`).join('')}
+    </table></div>`;
+  }
+
+  if(Object.keys(months).length) {
+    const sortedMonths=Object.keys(months).sort();
+    h+=`<div class="card"><div class="card__ttl">月別種付け数</div>
+    <table style="width:100%;border-collapse:collapse;font-size:0.85rem">
+      <tr style="border-bottom:1px solid var(--border)"><th style="text-align:left;padding:6px 4px;color:var(--text-sub);font-weight:600">月</th><th style="text-align:center;padding:6px 4px;color:var(--text-sub);font-weight:600">種付</th><th style="text-align:center;padding:6px 4px;color:var(--text-sub);font-weight:600">陽性</th><th style="text-align:left;padding:6px 8px;color:var(--text-sub);font-weight:600">受胎率</th></tr>
+      ${sortedMonths.map(ym=>{
+        const m=months[ym], rate=m.checked?Math.round(m.pos/m.checked*100):null;
+        return `<tr style="border-bottom:1px solid var(--border)"><td style="padding:8px 4px">${ym.replace('-','/')}</td><td style="text-align:center;padding:8px 4px">${m.total}</td><td style="text-align:center;padding:8px 4px">${m.pos}</td><td style="padding:8px 8px">${rateBar(rate)}</td></tr>`;
+      }).join('')}
+    </table></div>`;
+  }
+
+  if(!records.length) h=`<div class="empty"><div class="empty__ico">📊</div><div>この年度のデータがまだありません</div></div>`;
+  document.getElementById('stats-content').innerHTML=h;
 }
 
 // ===== SETTINGS =====
